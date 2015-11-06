@@ -16,6 +16,30 @@ var options = {
 
 var server = https.createServer(options);
 
+var handleRequest = function( url, cookies, notFound, redirect, forbidden, proxyReq ) {
+  proxy.detectProxy( url, function( err, proxyServer, host ) {
+    // 1. If no such proxy exists, then 404
+    if( err ) {
+      notFound(err);
+      return;
+    } 
+    var email = cookies.get(config.cookie.name, { signed: true } );
+    // 2. If no cookie or invalid, redirect for auth
+    if( !email ) {
+      redirect();
+      return;
+    } 
+    // 3. if not authorised, give 403
+    if( config.oauth.validUsers.indexOf( email ) == -1 ) {
+      forbidden(email);
+      return;
+    }
+    // 4. now proxy
+    console.log( 'Proxying request   ' + email + ':' + url + ' => ' + host );
+    proxyReq();
+  });
+};
+
 server.on('request', function(req, res) {
   
   var cookies = new Cookies(req,res,keys);
@@ -66,24 +90,24 @@ server.on('request', function(req, res) {
   } 
   
   // normal path processing
-    
-  var email = cookies.get(config.cookie.name, { signed: true } );
-  // 1. If no cookie or invalid, redirect for auth
-  if( !email ) {
-    redirect(oauth.authUrl(reqUrl.path));
-    return;
-  } 
-  // 2. if not authorised, give forbidden message
-  if( config.oauth.validUsers.indexOf( email ) == -1 ) {
-    forbidden('User not authorised: '+email);
-    return;
-  }
-  // 3. now proxy
   proxy.detectProxy( req.url, function( err, proxyServer, host ) {
+    // 1. If no such proxy exists, then 404
     if( err ) {
       notFound(err);
       return;
     } 
+    var email = cookies.get(config.cookie.name, { signed: true } );
+    // 2. If no cookie or invalid, redirect for auth
+    if( !email ) {
+      redirect(oauth.authUrl(reqUrl.path));
+      return;
+    } 
+    // 3. if not authorised, give 403
+    if( config.oauth.validUsers.indexOf( email ) == -1 ) {
+      forbidden('User not authorised: '+email);
+      return;
+    }
+    // 4. now proxy
     console.log( 'Proxying request   ' + email + ':' + req.url + ' => ' + host );
     proxyServer.web(req,res);
   });
@@ -98,22 +122,24 @@ server.on('upgrade', function (req, socket, head) {
     socket.end();
   }
   
-  var email = cookies.get(config.cookie.name, { signed: true } );
-  if( !email ) {
-    end('No authorisation cookie for websocket');
-    return;
-  } 
-  // 1. if not authorised, give forbidden message
-  if( config.oauth.validUsers.indexOf( email ) == -1 ) {
-    end('User not authorised: '+email);
-    return;
-  }
-  // 2. now proxy
   proxy.detectProxy( req.url, function( err, proxyServer, host ) {
+    //1. If no proxy exists, close socket
     if( err ) {
       end( err );
       return;
     } 
+    var email = cookies.get(config.cookie.name, { signed: true } );
+    //2. if no email in cookie, close socket
+    if( !email ) {
+      end('No authorisation cookie for websocket');
+      return;
+    } 
+    // 3. if not authorised, close socket
+    if( config.oauth.validUsers.indexOf( email ) == -1 ) {
+      end('User not authorised: '+email);
+      return;
+    }
+    // 4. now proxy
     console.log( 'Proxying websocket ' + email + ':' + req.url + ' => ' + host );
     proxyServer.ws(req, socket, head);
     
