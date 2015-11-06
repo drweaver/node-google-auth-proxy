@@ -16,11 +16,11 @@ var options = {
 
 var server = https.createServer(options);
 
-var handleRequest = function( url, cookies, notFound, redirect, forbidden, proxyReq ) {
+var handleRequest = function( url, cookies, stop, redirect, proxyReq ) {
   proxy.detectProxy( url, function( err, proxyServer, host ) {
     // 1. If no such proxy exists, then 404
     if( err ) {
-      notFound(err);
+      stop('The page you are looking for is not found', 404);
       return;
     } 
     var email = cookies.get(config.cookie.name, { signed: true } );
@@ -31,7 +31,7 @@ var handleRequest = function( url, cookies, notFound, redirect, forbidden, proxy
     } 
     // 3. if not authorised, give 403
     if( config.oauth.validUsers.indexOf( email ) == -1 ) {
-      forbidden('Not authorised: '+email);
+      stop('You are not authorised to access this page', 403);
       return;
     }
     // 4. now proxy
@@ -44,36 +44,22 @@ server.on('request', function(req, res) {
   
   var cookies = new Cookies(req,res,keys);
   
-  var badRequest = function(err) {
-    console.log(err);
-    res.writeHead(403, {'Content-Type': 'text/plain'});
-    res.write('Bad request');
-    res.end();
-  };
-  
   var redirect = function(loc) {
     console.log('Redirecting to '+loc);
     res.writeHead(302, {'Location': loc});
     res.end();
   };
   
-  var notFound = function(err) {
-    console.log( err );
-    res.writeHead(404, { "Content-Type": "text/plain" });
-    res.write('The page you are looking for is not found');
+  var stop = function(err, code) {
+    res.writeHead(code, { "Content-Type": "text/plain" });
+    res.write(err);
     res.end();
   };
   
-  var forbidden = function(err) {
-    console.log( err );
-    res.writeHead(403, { "Content-Type": "text/plain" });
-    res.write('You are not authorised to access this page');
-    res.end();
-  }
-  
   var reqUrl = url.parse(req.url, true);
   if( !reqUrl ) {
-    badRequest('Failed to parse request URL');
+    console.error('Failed to parse URL: '+req.url)
+    stop('Bad request', 403);
     return;
   }
   
@@ -88,7 +74,8 @@ server.on('request', function(req, res) {
   if( reqUrl.pathname == config.oauth.callbackPath ) {
     oauth.action(reqUrl.query.code, reqUrl.query.state, function( err, email, path ) {
       if( err ) {
-        badRequest(err);
+        console.error(err);
+        stop('Bad request', 403);
         return;
       }
       cookies.set(config.cookie.name, email, { signed: true, secureProxy: true, overwrite: true, maxAge: config.cookie.maxAge });
@@ -98,7 +85,7 @@ server.on('request', function(req, res) {
   } 
   
   // normal path processing
-  handleRequest(req.url, cookies, notFound, redirectToOauth, forbidden, proxyReq);
+  handleRequest(req.url, cookies, stop, redirectToOauth, proxyReq);
     
 });
 
@@ -114,7 +101,7 @@ server.on('upgrade', function (req, socket, head) {
      proxyServer.ws(req, socket, head);
   };
   
-  handleRequest(req.url, cookies, end, end, end, proxyReq);
+  handleRequest(req.url, cookies, end, end, proxyReq);
   
 });
 
